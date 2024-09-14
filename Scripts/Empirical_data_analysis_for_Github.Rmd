@@ -40,17 +40,18 @@ insight_data = read_csv(file="insight_math_UPDATED.csv")
 experts <- read.table(file = "mathExperts_allData.txt", 
                       sep='\t', 
                       skip = 1)
+
 colnames(experts) <- c("start","end","duration","ob2","ob1","file")
 
-# xtabs(~(ob1=="") + (ob2==""), experts)
+
 experts <- subset(experts, !(ob1!="" & ob2!=""))
 experts <- subset(experts, !(ob1=="" & ob2==""))
 
 experts <- experts %>% 
   separate(file, into = c("subName","problemName","elan"), remove = T) %>% 
- dplyr:: mutate(ob = paste(ob1, ob2, sep=""),
-         ob = as.integer(as.character(gsub("Object| ","", ob))),
-         subProb = paste(subName, problemName, sep="-")) %>% 
+  dplyr:: mutate(ob = paste(ob1, ob2, sep=""),
+                 ob = as.integer(as.character(gsub("Object| ","", ob))),
+                 subProb = paste(subName, problemName, sep="-")) %>% 
   dplyr::select(subName, problemName, start, end, duration, ob, subProb)
 
 experts <- experts %>% 
@@ -233,7 +234,6 @@ for (subject in unique(trans_cont_time_ent$subName)){ #subset by person
     for (i in 1:nrow(subset_prob)) { # for each row in the problem
       if (subset_prob$obNew[i] %in% unique_objects == TRUE) { # if the object is one found in the unique_objects vector
         print(paste0(i))
-        #unique_objects <- unique_objects[-subset_prob$obNew[i]] # remove the objects number from the vector
         unique_objects <- unique_objects[unique_objects != subset_prob$obNew[i] ]
         subset_prob$Event[i] <- "intro" # change the event for that row to "intro"
       } else {
@@ -286,6 +286,7 @@ xtabs(~isBeforeInsight + isAfterInsight, All_measures_and_events)
 ```
 
 ```{r}
+#Models:
 
 All_measures_and_events.ml1 <- glmer(event10 ~ 1 + isBeforeInsight * isAfterInsight + startMinutes + 
                                        (1|subProb), 
@@ -303,7 +304,8 @@ summary(All_measures_and_events.ml2)
 ```
 
 ```{r,fig.width = 8.5, fig.height = 4, warning=FALSE}
-#correct plot codes:
+#Plots:
+
 All_measures_and_events <- All_measures_and_events %>% 
   mutate(relToInsight = case_when(isBeforeInsight & !isAfterInsight ~ "pre-insight", 
                                   isAfterInsight & !isBeforeInsight ~ "post-insight", 
@@ -332,19 +334,7 @@ All_measures_and_events.agg <- All_measures_and_events.agg %>%
 
 measures_dataframe <- data.frame(All_measures_and_events.agg)
 
-measures_dataframe %>% 
-  ggplot(aes(x= plot_x, y = ent_MM, color = illumination)) + 
-  geom_pointrange(aes(ymin = ent_MM - ent_SE, 
-                      ymax = ent_MM + ent_SE), size = 2) + 
-  ylab("surprisal") +
-  scale_x_continuous( label = c( "non-insight", "pre-insight", "post-insight"), breaks = c(1,3,4), limits = c(0,4.5)) +
-  scale_y_continuous (expand = c(0,0.01), limits = c(1, 1.4))+
-  theme_classic(base_size = 30)+
-  theme(axis.text = element_text(size = 40)) +
-  theme(text = element_text(size = 40)) +
-  scale_color_discrete(guide=F) +
-  theme(axis.title.x = element_blank())+
-  geom_vline(xintercept = 2, linetype = 2)
+
 
 ```
 
@@ -450,6 +440,357 @@ actual_slide <- sliding_window_df.insightPeriods.agg %>%
 ```{r,  fig.width = 22, fig.height = 6, warning=FALSE}
 library(cowplot)
 plot_grid(actual_surp, actual_slide, ncol = 2, nrow = 1, align= "hv", labels= NULL)
+```
+
+#the netwrok figures:
+
+```{r}
+oneInsight <- adapted_insight[11,]
+window_param <- 60 * 1000
+
+```
+
+Pull out the activity before the insight: 
+```{r}
+transitions_before_insight <- All_measures_and_events %>%
+  filter(start < (oneInsight$start - window_param),
+         start >= (oneInsight$start - 3*window_param),
+         problemName == oneInsight$problemName,
+         subName == oneInsight$subName)
+
+transitions_before_insight <- transitions_before_insight %>% 
+  dplyr::select(subName, problemName, from = obNew_fac_prev_prior, to = obNew_fac_prior) %>%
+  dplyr::group_by(subName, problemName, from, to) %>% 
+  dplyr::mutate(n = length(from)) %>%
+  dplyr::group_by(subName, problemName, from) %>% 
+  dplyr::mutate(totalN = length(from),
+                transProb = n/totalN) %>%
+  dplyr::mutate(from = as.numeric(as.character(from)),
+                to = as.numeric(as.character(to))) %>%
+  arrange(subName, problemName, from, to)
+
+```
+
+Pull out the activity during the insight: 
+```{r}
+transitions_during_insight <- All_measures_and_events %>%
+  filter(start >= (oneInsight$start - window_param),
+         start < (oneInsight$start + window_param),
+         problemName == oneInsight$problemName,
+         subName == oneInsight$subName)
+
+transitions_during_insight <- transitions_during_insight %>% 
+  dplyr::select(subName, problemName, from = obNew_fac_prev_prior, to = obNew_fac_prior) %>%
+  dplyr::group_by(subName, problemName, from, to) %>% 
+  dplyr::mutate(n = length(from)) %>%
+  dplyr::group_by(subName, problemName, from) %>% 
+  dplyr::mutate(totalN = length(from),
+                transProb = n/totalN) %>%
+  dplyr::mutate(from = as.numeric(as.character(from)),
+                to = as.numeric(as.character(to))) %>%
+  arrange(subName, problemName, from, to)
+```
+
+Combine before and during:
+```{r}
+transitions_before_insight$when <- "before"
+transitions_during_insight$when <- "during"
+
+transitions_before_and_during_insight <- bind_rows(transitions_before_insight, transitions_during_insight)
+
+```
+
+```{r}
+edges_all <- transitions_before_and_during_insight %>%
+  dplyr::group_by(subName, problemName,
+                  from, to, 
+                  n, totalN, transProb) %>%
+  dplyr::summarize(when = "before")%>%
+  arrange(subName, problemName, from, to)
+
+nodes_all <- transitions_before_and_during_insight %>% 
+  dplyr::group_by(subName, problemName, id = to) %>% 
+  dplyr::summarize(totalN = length(id)) %>%
+  arrange(id)
+
+all_net <- tbl_graph(nodes = nodes_all, 
+                     edges = edges_all, 
+                     directed = TRUE)
+```
+
+```{r}
+
+edges_before <- transitions_before_insight %>%
+  dplyr::group_by(subName, problemName,
+                  from, to, 
+                  n, totalN, transProb) %>%
+  dplyr::summarize(when = "before")%>%
+  arrange(subName, problemName, from, to)
+
+nodes_before <- transitions_before_insight %>% 
+  dplyr::group_by(subName, problemName, id = from) %>% 
+  dplyr::summarize(totalN = length(id)) %>%
+  arrange(id) 
+
+before_net <- tbl_graph(nodes = nodes_all, 
+                        edges = edges_before, 
+                        directed = TRUE)
+
+```
+
+```{r}
+
+edges_insight <- transitions_during_insight %>%
+  dplyr::group_by(subName, problemName,
+                  from, to, 
+                  n, totalN, transProb) %>%
+  dplyr::summarize(when = "during") %>%
+  arrange(subName, problemName, from, to) 
+
+newEdges <- edges_insight %>% 
+  ungroup() %>%
+  dplyr::select(from, to) %>% 
+  anti_join(dplyr::select(ungroup(edges_before), from, to)) %>% 
+  mutate(new = T)
+
+edges_insight <- edges_insight %>% 
+  left_join(newEdges) %>% 
+  mutate(new = case_when(is.na(new) ~ F,
+                         TRUE ~ new))
+
+nodes_insight <- transitions_during_insight %>% 
+  dplyr::group_by(subName, problemName, id = from) %>% 
+  dplyr::summarize(totalN = length(id)) %>%
+  arrange(id) 
+
+during_net <- tbl_graph(nodes = nodes_all, 
+                        edges = edges_insight, 
+                        directed = TRUE)
+
+
+```
+
+
+```{r}
+set.seed(101)
+final_layout <- create_layout(graph = all_net, layout = "circle")
+
+```
+
+```{r}
+edges_before$when <- "before"
+edges_insight$when <- "during"
+edges_all <- bind_rows(edges_before, edges_insight)
+edges_diff <- edges_all %>%
+  ungroup() %>%
+  dplyr::select(subName, problemName, from, to, when, transProb) %>%
+  pivot_wider(id_cols = subName:to, names_from = when, values_from = transProb) %>%
+  mutate(during = case_when(is.na(during) ~ 0,
+                            TRUE ~ during)) %>%
+  mutate(before = case_when(is.na(before) ~ 0,
+                            TRUE ~ before)) %>%
+  mutate(transProb = during - before,
+         transProbSign = factor(sign(transProb)))
+
+diff_net <- tbl_graph(nodes = nodes_all, 
+                      edges = edges_diff, 
+                      directed = TRUE)
+```
+
+```{r}
+# diff_layout <- subset(final_layout, id %in% unique(nodes_di$id), x:y)
+diff.net.plot <- diff_net %>%
+  # ggraph(layout = "fr") +
+  ggraph(x=final_layout$x, y=final_layout$y) +
+  
+  #Directed edges:
+  geom_edge_fan(aes(width=transProb, color=transProbSign, alpha = ..index..)) +
+  # scale_edge_alpha('Edge direction', guide = 'edge_direction') +
+  scale_edge_alpha('Edge direction', guide = F) +
+  
+  
+  geom_node_point(aes(), size=10) + 
+  geom_node_text(aes(label = id), size=4,fontface = "bold", color="white") +
+  
+  scale_size(range = c(5, 10), guide=F) +
+  scale_edge_width(guide=F) +
+  
+  scale_x_continuous(limits = c(-1,1)) +
+  scale_y_continuous(limits = c(-1,1)) +
+  
+  theme_graph() + th_foreground(foreground = 'grey80', border = TRUE) + 
+  
+  scale_color_manual(guide=F, values = c("red","blue")) +
+  scale_fill_discrete(guide=F) +
+  theme(plot.margin=grid::unit(c(5,0,5,0), "mm"),
+        # plot.background = element_rect(fill = NULL, color="black"),
+        panel.border = element_blank(), 
+        legend.position = "none")
+diff.net.plot
+```
+
+
+```{r}
+before_layout <- subset(final_layout, id %in% unique(nodes_before$id), x:y)
+
+before.net.plot <- before_net %>%
+  # ggraph(layout = "fr") +
+  ggraph(x=final_layout$x, y=final_layout$y) +
+  
+  #Directed edges:
+  geom_edge_fan(aes(width=transProb, alpha = ..index..)) +
+  # scale_edge_alpha('Edge direction', guide = 'edge_direction') +
+  scale_edge_alpha('Edge direction', guide = F) +
+  
+  
+  geom_node_point(aes(), size=10) + 
+  geom_node_text(aes(label = id), size=4, fontface = "bold", color="white") +
+  scale_size(guide=F) +
+  scale_color_discrete(breaks=1:9, guide=F) + 
+  
+  scale_x_continuous(limits = c(-1.1,1.1)) +
+  scale_y_continuous(limits = c(-1.1,1.1)) +
+  
+  scale_edge_width_continuous(range = c(0,6), guide=F) + 
+  
+  theme_graph() + th_foreground(foreground = 'grey80', border = TRUE) + 
+  theme(plot.margin=grid::unit(c(5,0,5,0), "mm"),
+        # plot.background = element_rect(fill = NULL, color="black"),
+        panel.border = element_blank())
+before.net.plot
+```
+
+```{r}
+during_layout <- subset(final_layout, id %in% unique(nodes_insight$id), x:y)
+
+
+during.net.plot <- during_net %>%
+  # ggraph(layout = "fr") +
+  ggraph(x=final_layout$x, y=final_layout$y) +
+  #Directed edges:
+  geom_edge_fan(aes(width=transProb, alpha = ..index.., color=new)) +
+  # scale_edge_alpha('Edge direction', guide = 'edge_direction') +
+  scale_edge_alpha('Edge direction', guide = F) +
+  
+  
+  geom_node_point(aes(), size=10, color="black") + 
+  geom_node_text(aes(label = id), size=4,  fontface = "bold", color="white") +
+  scale_size(range = c(5, 10), guide=F) +
+  scale_color_discrete(guide=F) + 
+  
+  scale_edge_width(guide=F, range = c(1,6)) + 
+  scale_edge_color_manual(values = c("black","blue")) +
+  
+  scale_x_continuous(limits = c(-1.1,1.1)) +
+  scale_y_continuous(limits = c(-1.1,1.1)) +
+  
+  theme_graph() + th_foreground(foreground = 'grey80', border = TRUE) + 
+  theme(plot.margin=grid::unit(c(5,0,5,0), "mm"),
+        # plot.background = element_rect(fill = NULL, color="black"),
+        panel.border = element_blank(), 
+        legend.position = "none")
+during.net.plot
+```
+
+```{r}
+grid.arrange(grobs=list(before.net.plot, during.net.plot, diff.net.plot), 
+             ncol=2, 
+             widths = c(1,2), 
+             layout_matrix = rbind(c(1, 3),
+                                   c(2, 3)))
+
+network_graph_dami <- grid.arrange(grobs = list(before.net.plot, during.net.plot), 
+                                   ncol = 2, 
+                                   widths = c(1, 1), 
+                                   layout_matrix = rbind(c(1, 2)))
+
+ggsave("network_graph_dami.png", plot = network_graph_dami, width = 10, height = 5, dpi = 300)
+
+
+```
+
+Plots to illustrate combinatorial creativity:
+```{r}
+edges_combinatorial1 <- tibble(from = c(1, 2, 2, 3), 
+                               to = c(2, 1, 3, 2), 
+                               transProb = c(.8, .7, .9, .3)) 
+
+nodes_combinatorial <- tibble(id = factor(1:3))
+
+comb_net1 <- tbl_graph(nodes = nodes_combinatorial, 
+                       edges = edges_combinatorial1, 
+                       directed = TRUE)
+
+combinatorial.plot1 <- comb_net1 %>%
+  ggraph(layout = "circle") +
+  #Directed edges:
+  geom_edge_fan(aes(width=transProb, alpha = ..index..)) +
+  # scale_edge_alpha('Edge direction', guide = 'edge_direction') +
+  scale_edge_alpha('Edge direction', guide = F) +
+  
+  
+  geom_node_point(aes(), size=20, color = "black") + 
+  geom_node_text(aes(label = id), size=5, fontface = "bold", color="white") +
+  scale_size(range = c(10, 10), guide=F) + 
+  scale_color_discrete(guide=F) + 
+  
+  scale_edge_width(guide=F, range = c(2,9)) + 
+  
+  scale_x_continuous(limits = c(-1.1,1.1)) +
+  scale_y_continuous(limits = c(-1.1,1.1)) +
+  
+  theme_graph() + th_foreground(foreground = 'grey80', border = TRUE) + 
+  theme(plot.margin=grid::unit(c(5,0,5,0), "mm"),
+        # plot.background = element_rect(fill = NULL, color="black"),
+        panel.border = element_blank())
+combinatorial.plot1
+
+########
+edges_combinatorial2 <- tibble(from = c(2, 2, 3, 3, 1), 
+                               to = c(1, 3, 2, 1, 3), 
+                               transProb = c(0, .9, .3, .8, .5),
+                               new = factor(c(0, 0, 0, 1, 1))) 
+comb_net2 <- tbl_graph(nodes = nodes_combinatorial, 
+                       edges = edges_combinatorial2, 
+                       directed = TRUE)
+
+combinatorial.plot2 <- comb_net2 %>%
+  ggraph(layout = "circle") +
+  #Directed edges:
+  geom_edge_fan(aes(width=transProb, alpha = ..index.., color=new)) +
+  # scale_edge_alpha('Edge direction', guide = 'edge_direction') +
+  scale_edge_alpha('Edge direction', guide = F) +
+  
+  
+  geom_node_point(aes(), size=20, color = "black") + 
+  geom_node_text(aes(label = id), size=5, color="white") +
+  scale_size(range = c(10, 10), guide=F) + 
+  scale_color_discrete(guide=F) + 
+  
+  scale_edge_width(guide=F, range = c(2,9)) + 
+  scale_edge_color_manual(guide=F, values = c("black","blue")) + 
+  
+  scale_x_continuous(limits = c(-1.1,1.1)) +
+  scale_y_continuous(limits = c(-1.1,1.1)) +
+  
+  theme_graph() + th_foreground(foreground = 'grey80', border = TRUE) + 
+  theme(plot.margin=grid::unit(c(5,0,5,0), "mm"),
+        # plot.background = element_rect(fill = NULL, color="black"),
+        panel.border = element_blank())
+combinatorial.plot2
+```
+
+```{r, fig.width = 5, fig.height = 5}
+library(cowplot)
+p1 <- plot_grid(combinatorial.plot1, combinatorial.plot2, 
+                labels = c("A","B"), label_size = 20) + 
+  theme(plot.background = element_rect(color = "black"))
+
+p2 <- plot_grid(before.net.plot, during.net.plot, 
+          labels = c("C","D"), label_size = 20) + 
+  theme(plot.background = element_rect(color = "black"))
+
+plot_grid(p1, p2, ncol=1)
 ```
 
 
