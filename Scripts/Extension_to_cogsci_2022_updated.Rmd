@@ -1,0 +1,586 @@
+---
+title: "For_publication_intros"
+author: "Shadi"
+date: "1/23/2022"
+output: html_document
+---
+## This script is a modified version of what we submitted to cogsci. It makes sure that the transition matrices also include the transitions from and to the introduction moments. It also includes a sliding window analysis that replicates the increase in surprisal.  This is also what we used to validate findings from our minimal model of mathematical insights.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(tidyverse)
+library(lmerTest)
+library(tidygraph)
+library(ggraph)
+library(gridExtra)
+library(igraph)
+library(magrittr) 
+library(entropy)
+library(devtools)
+library(ccber) #for probability transition matrix
+library(KernSmooth)
+
+```
+
+Here we use the updated list of insights without removing any of the insights that are close to each other
+```{r}
+# In case you run the code outside of the math environment: "/Users/shaditaba/Desktop/cogs_courses/Math_insight_Project/data/insight_math_UPDATED.csv"
+insight_data = read_csv(file="/Users/shaditaba/Desktop/cogs_courses/Math_insight_Project/data/insight_math_UPDATED.csv")
+```
+
+```{r}
+# In case you run the code outside of the math environment:
+#"/Users/shaditaba/Desktop/cogs_courses/Math_insight_Project/data/mathExperts_allData.txt"
+experts <- read.table(file = "/Users/shaditaba/Desktop/cogs_courses/Math_insight_Project/data/mathExperts_allData.txt", 
+                      sep='\t', 
+                      skip = 1)
+colnames(experts) <- c("start","end","duration","ob2","ob1","file")
+
+# xtabs(~(ob1=="") + (ob2==""), experts)
+experts <- subset(experts, !(ob1!="" & ob2!=""))
+experts <- subset(experts, !(ob1=="" & ob2==""))
+
+experts <- experts %>% 
+  separate(file, into = c("subName","problemName","elan"), remove = T) %>% 
+ dplyr:: mutate(ob = paste(ob1, ob2, sep=""),
+         ob = as.integer(as.character(gsub("Object| ","", ob))),
+         subProb = paste(subName, problemName, sep="-")) %>% 
+  dplyr::select(subName, problemName, start, end, duration, ob, subProb)
+
+experts <- experts %>% 
+  filter(subProb != "Prasit-PowerSet") #only person who did this problem
+
+
+
+```
+
+```{r}
+
+# In case you run the code outside of the math environment:
+#"/Users/shaditaba/Desktop/cogs_courses/Math_insight_Project/data/Experts-RecodingObjectsIntoClusters.csv"
+
+#Making new labels for objects (basically trying to reduce the number of individual objects originally determined by Elan program).
+newObjectLabels <- read.csv(file = "/Users/shaditaba/Desktop/cogs_courses/Math_insight_Project/data/Experts-RecodingObjectsIntoClusters.csv")
+
+colnames(newObjectLabels) <- c("subName","problemNum","ob","obNew","problemName")
+
+experts.2 <- experts %>% 
+  left_join(newObjectLabels, by=c("subName", "problemName","ob")) %>% 
+  mutate(obNew = ifelse(is.na(obNew), ob, obNew)) %>% 
+  dplyr::group_by(subName, problemName) %>% 
+  mutate(obNew = as.integer(as.factor(obNew))) %>% 
+  dplyr::group_by(subProb) %>% 
+  mutate(totalObjects = max(obNew),
+         startn = start/max(end),
+         durationn = duration/max(end),
+         endn = end/max(end)) %>%
+  ungroup() 
+
+
+
+# Selecting the relevant columns from the original insight data frame.
+adapted_insight<- insight_data %>% 
+  filter(keep == T) %>% 
+  dplyr::select(subName,problemName,start, Event, Insight_Number,insight_intensity )
+
+
+# Adding a new column to specify the type of event (i.e., attention or insight).
+experts.3 <- experts.2 %>%
+  mutate(Event= "attention")
+
+# Adding rows of the insight data frame to the original data frame including information about participants' interactions with objects (i.e., mathematical notations).
+experts_and_insights <- bind_rows(experts.3,adapted_insight )
+
+experts_and_insights_clean<-experts_and_insights %>% 
+  filter(subName!= "Neil", subName!= "Prasit")%>% # Neil only did one of the problems, and no information for Prasit's insights is available. So they are excluded.
+  dplyr::group_by(subName, problemName)%>%
+  arrange(subName, problemName, start) %>%
+  mutate(iei = c(NA, diff(start)))
+
+```
+
+```{r}
+index <- which(experts_and_insights_clean==1726070, arr.ind=TRUE)
+index # row 2831 and row 2832 have the same start time which causes problems in later analyses. So I will add jitter to one of those lines.
+#That is I add 20ms to the start value on row 2832
+
+library(magrittr)
+experts_and_insights_clean<-experts_and_insights_clean %>% { .[2832,3] <- 1726090;. }
+unique(experts_and_insights_clean$totalObjects)
+```
+
+#make a for loop to count the number of rows before the first insight;
+
+```{r}
+
+count_row_prior_1st_insight <- tibble()
+for (subject in unique(experts_and_insights_clean$subName)){ # Subsetting by participants 
+  subset_subj <- experts_and_insights_clean %>%
+    filter(subName == subject) 
+  
+  for (problem in unique(subset_subj$problemName)){ # Subsetting by problems
+    subset_prob <- subset_subj %>%
+      filter(problemName == problem) %>%
+      mutate(num_prior_event = NULL) 
+    
+    for (i in length(subset_prob$Event)){
+      if (i == "insight"){num_prior_event = length(1:i)
+      } else {
+        next
+      }
+      
+      add<- tibble (start = subset_prob$start, subject = subject, problem = problem,num_prior_event = num_prior_event )
+      
+      count_row_prior_1st_insight <- bind_rows(count_row_prior_1st_insight, add)
+    }
+  }
+}
+
+
+```
+
+# Calculating transition matrix both based on all events and prior events
+```{r}
+# Making a function to calculate entropy from transition matrix
+ent_from_trans_matrix <- function(trans_matrix, val_prev, val_next){
+  prob = trans_matrix[val_prev, val_next]
+  h = -log2(prob)
+  return(h)
+}
+
+```
+
+```{r}
+# This code calculates the transition matrix based on all events in each session, 
+# it also calculates the transition matrix based only on prior events.
+
+#pay attention that we filter for attention to get rid of the insight moment since they do not have an object. Intro moments are not marked in this dataset (experts_and_insights_clean).
+
+trans_cont_time_ent <- tibble()
+window_size <- 60*1000
+for (subject in unique(experts_and_insights_clean$subName)){ # Subsetting by participants 
+  subset_subj <- experts_and_insights_clean %>%
+    filter(subName == subject) %>%
+    filter(Event == "attention")
+  
+  for (problem in unique(subset_subj$problemName)){ # Subsetting by problems
+    subset_prob <- subset_subj %>%
+      filter(problemName == problem) %>%
+      # Making a new column including a lagged version of the objects:
+      mutate(obNew_fac = factor(obNew),
+             obNew_fac_prev = lag(obNew_fac)) 
+    
+    subset_prob_with_intros <- experts_and_insights_clean %>%
+      filter(subName == subject, problemName == problem) %>%
+      filter(Event != "insight") %>%
+      mutate(obNew_fac = factor(obNew),
+             obNew_fac_prev = lag(obNew_fac)) 
+    
+    #### Making a matrix of all transition counts:
+    trans_count <- CalcTransitionCounts(subset_prob_with_intros$obNew_fac)
+    # Calculating the probability of each transition:
+    trans_prob <- CalcTransitionMatrix(trans_count) 
+    
+    for(eventi in 2:nrow(subset_prob)){
+      # Subset data so it's only the current event and prior events
+      current_event <- subset_prob[eventi,]
+      print(paste(current_event$subName, current_event$problemName, eventi))
+      event_time <- current_event$start
+      
+      prior_events <- subset_prob_with_intros %>% 
+        filter(start > (event_time - window_size),
+               start <= event_time) %>%
+        mutate(obNew_fac_prior = factor(obNew),
+               obNew_fac_prev_prior = lag(obNew_fac_prior),
+               prior_total_obj= n_distinct(obNew)) 
+      
+      current_event <- subset(prior_events, start == event_time)
+      
+      # Get transition matrix for those events
+      trans_count_prior <- CalcTransitionCounts(prior_events$obNew_fac_prior)
+      trans_prob_prior <- CalcTransitionMatrix(trans_count_prior) 
+      # Calculate entropy of the current event, relative to prior events
+      current_event$current_event_ent_prior <- ent_from_trans_matrix(trans_prob_prior, 
+                                                                     current_event$obNew_fac_prev_prior, 
+                                                                     current_event$obNew_fac_prior)
+      # Calculate entropy of the current event, relative to all events
+      current_event$current_event_ent_overall <- ent_from_trans_matrix(trans_prob,current_event$obNew_fac_prev,current_event$obNew_fac)
+      
+      trans_cont_time_ent <- bind_rows(trans_cont_time_ent,current_event)
+    }
+  }
+}
+hist(trans_cont_time_ent$current_event_ent_prior)
+```
+
+## Adding introductions to the Event Column:
+
+```{r}
+All_measures_and_events <- tibble()
+
+for (subject in unique(trans_cont_time_ent$subName)){ #subset by person
+  subset_subj <- trans_cont_time_ent %>% 
+    filter(subName == subject, is.na(obNew) == F) #Get rid of the NA rows
+  print(subject)
+  for (problem in unique(subset_subj$problemName)){ #subset by problem
+    print(problem)
+    subset_prob <- subset_subj %>% 
+      filter(problemName == problem)
+    unique_objects <- sort(unique(subset_prob$obNew))
+    for (i in 1:nrow(subset_prob)) { # for each row in the problem
+      if (subset_prob$obNew[i] %in% unique_objects == TRUE) { # if the object is one found in the unique_objects vector
+        print(paste0(i))
+        #unique_objects <- unique_objects[-subset_prob$obNew[i]] # remove the objects number from the vector
+        unique_objects <- unique_objects[unique_objects != subset_prob$obNew[i] ]
+        subset_prob$Event[i] <- "intro" # change the event for that row to "intro"
+      } else {
+        next
+      }
+    }
+    All_measures_and_events <- bind_rows(All_measures_and_events, subset_prob)
+  }
+}
+
+
+```
+
+
+
+```{r}
+
+#Marking the relation of shifts if attention to the moment of insight
+window_param <- 60 * 1000
+
+All_measures_and_events$isAfterInsight <- F
+All_measures_and_events$isBeforeInsight <- F
+
+All_measures_and_events <- All_measures_and_events %>%
+  mutate(event10 = (Event == "intro"),
+         startMinutes = start / (60*1000),
+         isAroundInsight = isAfterInsight | isBeforeInsight)
+
+for(insight_i in 1:nrow(adapted_insight)){
+  # print(insight_i)
+  #get insight info
+  subNamei <- as.character(adapted_insight[insight_i,"subName"])
+  problemNamei <- as.character(adapted_insight[insight_i,"problemName"])
+  starti <- as.numeric(adapted_insight[insight_i,"start"])
+  
+  All_measures_and_events[All_measures_and_events$subName == subNamei &
+                            All_measures_and_events$problemName == problemNamei & 
+                            All_measures_and_events$start >= (starti - window_param) & 
+                            (All_measures_and_events$start < starti),]$isBeforeInsight <- T
+  
+  All_measures_and_events[All_measures_and_events$subName == subNamei &
+                            All_measures_and_events$problemName == problemNamei & 
+                            (All_measures_and_events$start > starti) & 
+                            All_measures_and_events$start <= (starti + window_param),]$isAfterInsight <- T
+  
+}
+
+xtabs(~isBeforeInsight + isAfterInsight, All_measures_and_events)
+
+```
+
+```{r}
+options(scipen=999)
+# 
+All_measures_and_events.ml1 <- glmer(event10 ~ 1 + isBeforeInsight * isAfterInsight + startMinutes + 
+                                       (1|subProb), 
+                                     data = All_measures_and_events, 
+                                     family = "binomial", 
+                                     verbose=T)
+summary(All_measures_and_events.ml1)
+
+
+# The following bit was added by Tyler to center the model on other times as opposed to on 0.
+All_measures_and_events <- All_measures_and_events %>% 
+  mutate(isOtherTimes = !(isBeforeInsight | isAfterInsight))
+
+All_measures_and_events.ml2 <- glmer(event10 ~ 1 + isOtherTimes * isAfterInsight + startMinutes + 
+                                       (1|subProb), 
+                                     data = All_measures_and_events, 
+                                     family = "binomial", 
+                                     verbose=T)
+summary(All_measures_and_events.ml2)
+
+All_measures_and_events %>%
+  group_by(isBeforeInsight, isAfterInsight) %>%
+  summarize(event10 = mean(event10))
+
+#####the end of the bit added by Tyler
+
+# 
+All_measures_and_events.ml2 <- lmer(current_event_ent_prior ~ 1 + event10 + 
+                                      isBeforeInsight * isAfterInsight + 
+                                      startMinutes + 
+                                      (1|subProb), 
+                                    data = All_measures_and_events)
+summary(All_measures_and_events.ml2)
+```
+```{r,fig.width = 8.5, fig.height = 4, warning=FALSE}
+#correct plot codes:
+All_measures_and_events <- All_measures_and_events %>% 
+  mutate(relToInsight = case_when(isBeforeInsight & !isAfterInsight ~ "pre-insight", 
+                                  isAfterInsight & !isBeforeInsight ~ "post-insight", 
+                                  isAfterInsight & isAfterInsight ~ "both", 
+                                  TRUE ~ "non-insight")) 
+
+All_measures_and_events.agg <- All_measures_and_events %>%
+  group_by(relToInsight, isBeforeInsight, isAfterInsight, subProb) %>%
+  dplyr::summarize(new_objects_M = mean(event10),
+                   ent_M = mean(current_event_ent_prior),
+                   .groups = "drop") %>%
+  group_by(relToInsight, isBeforeInsight, isAfterInsight) %>%
+  dplyr::summarize(new_objects_MM = mean(new_objects_M),
+                   new_objects_SE = sd(new_objects_M)/sqrt(n()),
+                   ent_MM = mean(ent_M),
+                   ent_SE = sd(ent_M)/sqrt(n()),
+                   .groups = "drop")
+
+All_measures_and_events.agg <- All_measures_and_events.agg %>% 
+  mutate(plot_x = case_when(relToInsight == "non-insight" ~ 1, 
+                            relToInsight ==  "pre-insight"  ~ 3, 
+                            relToInsight == "post-insight" ~ 4), 
+         illumination = case_when(relToInsight == "non-insight" ~ F, 
+                                  relToInsight ==  "pre-insight"  ~ T, 
+                                  relToInsight == "post-insight" ~ T))
+
+measures_dataframe <- data.frame(All_measures_and_events.agg)
+
+
+
+measures_dataframe %>% 
+  # filter(plot_x != "both") %>%
+  ggplot(aes(x= plot_x, y = ent_MM, color = illumination)) + 
+  geom_pointrange(aes(ymin = ent_MM - ent_SE, 
+                      ymax = ent_MM + ent_SE), size = 2) + 
+  ylab("surprisal") +
+  scale_x_continuous( label = c( "non-insight", "pre-insight", "post-insight"), breaks = c(1,3,4), limits = c(0,4.5)) +
+  scale_y_continuous (expand = c(0,0.01), limits = c(1, 1.4))+
+  #xlab("Relation to insight") +
+  #scale_x_discrete(labels = c ( 1 = "non-insight" ,  3 = "pre-insight" , 4 = "post-insight"))
+  theme_classic(base_size = 15)+
+  theme(axis.text = element_text(size = 40)) +
+  theme(text = element_text(size = 40)) +
+  #theme(panel.grid.major = element_blank(),
+  # panel.grid.minor = element_blank())+
+  scale_color_discrete(guide=F) +
+  theme(axis.title.x = element_blank())+
+  geom_vline(xintercept = 2, linetype = 2)
+# theme(text = element_text(size = 20)) +
+# theme(axis.text = element_text(size = 20))+ 
+# scale_color_discrete(guide=F) 
+
+###modify the look for dissertaion
+measures_dataframe %>% 
+  # filter(plot_x != "both") %>%
+  ggplot(aes(x= plot_x, y = ent_MM, color = illumination)) + 
+  geom_pointrange(aes(ymin = ent_MM - ent_SE, 
+                      ymax = ent_MM + ent_SE), size = 2) + 
+  ylab("surprisal") +
+  scale_x_continuous( label = c( "non-insight", "pre-insight", "post-insight"), breaks = c(1,3,4), limits = c(0,4.5)) +
+  scale_y_continuous (expand = c(0,0.01), limits = c(1, 1.4))+
+  #xlab("Relation to insight") +
+  #scale_x_discrete(labels = c ( 1 = "non-insight" ,  3 = "pre-insight" , 4 = "post-insight"))
+  theme_classic(base_size = 30)+
+  theme(axis.text = element_text(size = 40)) +
+  theme(text = element_text(size = 40)) +
+  #theme(panel.grid.major = element_blank(),
+  # panel.grid.minor = element_blank())+
+  scale_color_discrete(guide=F) +
+  theme(axis.title.x = element_blank())+
+  geom_vline(xintercept = 2, linetype = 2)
+# theme(text = element_text(size = 20)) +
+# theme(axis.text = element_text(size = 20))+ 
+# scale_color_discrete(guide=F) 
+
+```
+
+```{r,fig.width = 10, fig.height = 6 }
+
+#surprisal relative to the moment of insight
+actual_surp <- measures_dataframe %>% 
+  # filter(plot_x != "both") %>%
+  ggplot(aes(x= plot_x, y = ent_MM, color = illumination)) + 
+  geom_pointrange(aes(ymin = ent_MM - ent_SE, 
+                      ymax = ent_MM + ent_SE), size = 2) + 
+  ylab("surprisal") +
+  scale_x_continuous( label = c( "non-insight", "pre-insight", "        post-insight"), breaks = c(1,3,4), limits = c(0,4.5)) +
+  scale_y_continuous (expand = c(0,0.01), limits = c(1, 1.4))+
+  #xlab("Relation to insight") +
+  #scale_x_discrete(labels = c ( 1 = "non-insight" ,  3 = "pre-insight" , 4 = "post-insight"))
+  theme_classic(base_size = 30)+
+  theme(axis.text = element_text(size = 30)) +
+  theme(text = element_text(size = 30)) +
+  theme(axis.line = element_line(size = 1))+
+  scale_color_discrete(guide=F) +
+  theme(axis.title.x = element_blank())+
+  geom_vline(xintercept = 2, linetype = 2, size = 1)
+# theme(text = element_text(size = 20)) +
+# theme(axis.text = element_text(size = 20))+ 
+# scale_color_discrete(guide=F) 
+
+
+```
+
+
+```{r, fig.width = 12, fig.height = 5}
+
+#probability of new inscriptions relative to the moment of insight
+measures_dataframe %>% 
+  # filter(plot_x != "both") %>%
+  ggplot(aes(x= plot_x, y = new_objects_MM, color = illumination)) + 
+  geom_pointrange(aes(ymin=new_objects_MM-new_objects_SE, 
+                      ymax=new_objects_MM + new_objects_SE), size = 2) +
+  
+  ylab("P(new inscription)") +
+  scale_x_continuous( label = c( "non-insight", "pre-insight", "     post-insight"), breaks = c(1,3,4), limits = c(0,4.5)) +
+  #xlab("Relation to insight") +
+  #scale_x_discrete(labels = c ( 1 = "non-insight" ,  3 = "pre-insight" , 4 = "post-insight"))
+  scale_y_continuous (expand = c(0,0), limits= c(0.01, 0.09))+
+  #xlab("Relation to insight") +
+  #scale_x_discrete(labels = c ( 1 = "non-insight" ,  3 = "pre-insight" , 4 = "post-insight"))
+  theme_classic(base_size = 15)+
+  theme(axis.text = element_text(size = 30)) +
+  theme(text = element_text(size = 30)) +
+  #theme(panel.grid.major = element_blank(),
+  # panel.grid.minor = element_blank())+
+  scale_color_discrete(guide=F) +
+  theme(axis.title.x = element_blank())+
+  geom_vline(xintercept = 2, linetype = 2)
+
+# theme(axis.title.x = element_blank())+
+# geom_vline(xintercept = 2, linetype = 2)+
+# theme(text = element_text(size = 20)) +
+# theme(axis.text = element_text(size = 20))+
+# scale_color_discrete(guide=F) 
+
+
+
+
+```
+
+# Sliding window analysis of surprisal
+```{r}
+
+sliding_width <- 1*60*1000
+sliding_step <- 1000
+sliding_window_df <- tibble()
+for (subProbi in unique(All_measures_and_events$subProb)){
+  print(subProbi)
+  All_measures_and_events.sub <- All_measures_and_events %>%
+    filter(subProb == subProbi)
+  for(starti in seq(sliding_width, 
+                    ceiling(max(All_measures_and_events.sub$start)/sliding_step)*sliding_step, 
+                    sliding_step)){
+    windowed_i <- All_measures_and_events.sub %>%
+      filter(start > (starti - sliding_width), start <= starti) %>%
+      group_by(subName, problemName, subProb) %>%
+      dplyr::summarize(surprisalM = mean(current_event_ent_prior),
+                       start = starti,
+                       n = n(),
+                       .groups="drop")
+    sliding_window_df <- bind_rows(sliding_window_df, windowed_i)
+  }
+}
+```
+
+##Tyler's addition to replicate our analysis using a sliding window
+Pull out relevant periods, and recenter the time variable so it's centered on the first insight:
+```{r, fig.width = 10, fig.height = 6}
+
+adapted_insight <- adapted_insight %>%
+  mutate(subProb = paste(subName, problemName, sep="-"))
+first_last_insights <- adapted_insight %>%
+  dplyr::group_by(subProb) %>%
+  dplyr:: summarise(first_insight_start = round(min(start)/sliding_step)*sliding_step,
+                    last_insight_start = round(max(start)/sliding_step)*sliding_step,
+                    .groups="drop")
+sliding_window_df2 <- sliding_window_df %>%
+  left_join(first_last_insights)
+sliding_window_df2 <- sliding_window_df2 %>%
+  mutate(start_first_c = start - first_insight_start,
+         start_last_c = start - last_insight_start)
+time_before <- 5*60*1000
+time_after <- 3*60*1000
+sliding_window_df.insightPeriods <- sliding_window_df2 %>%
+  filter(start_first_c > -time_before,
+         start_first_c < time_after)
+# sliding_window_df.insightPeriods %>%
+#   ggplot(aes(x=start_first_c, y=surprisalM)) +
+#   geom_line() +
+#   geom_vline(xintercept=0) +
+#   facet_wrap(~subProb, scales="free")
+
+sliding_window_df.insightPeriods.agg <- sliding_window_df.insightPeriods %>%
+  group_by(start_first_c) %>%
+  dplyr::summarize(surprisalM_M = mean(surprisalM),
+                   surprisalM_SE = sd(surprisalM)/sqrt(n()),
+                   n = n(), .groups = "drop")
+start_value <- min(sliding_window_df.insightPeriods.agg$surprisalM_M)
+start_time <- min(sliding_window_df.insightPeriods.agg$start_first_c)/(60*1000)
+
+actual_slide <- sliding_window_df.insightPeriods.agg %>%
+  mutate(start_first_c_min = start_first_c/(60*1000)) %>%
+  filter(n>1) %>%
+  ggplot(aes(x=start_first_c_min, y=surprisalM_M)) +
+  geom_ribbon(aes(ymin=surprisalM_M - surprisalM_SE, ymax=surprisalM_M + surprisalM_SE), alpha=.5) +
+  geom_line(size = 1) +
+  geom_vline(xintercept=0, size = 1) +
+  geom_segment(aes(x = start_time - 1, y = start_value, xend = start_time, yend = start_value), size = 1, colour = "blue")+
+  theme_classic(base_size = 30)+
+  theme(axis.text = element_text(size = 25)) +
+  theme(text = element_text(size = 30)) +
+  theme(axis.line = element_line(size = 1))+
+  scale_color_discrete(guide=F) +
+  scale_x_continuous(expression(paste("time (", italic("t"), ")"))) +
+  scale_y_continuous(expression(paste("surprisal (", italic("h(t)"), ")")))
+
+#ggsave("../pic/nice_plot.png", plot = actual_slide)
+```
+
+
+```{r,  fig.width = 22, fig.height = 6, warning=FALSE}
+library(cowplot)
+plot_grid(actual_surp, actual_slide, ncol = 2, nrow = 1, align= "hv", labels= NULL)
+```
+
+
+
+
+#### Deniz triangle session plots to describe our time series during a presentation
+
+```{r, fig.height=4, fig.width=6}
+
+## Plot for Deniz objects
+Deniz_objects_triangle <- experts_and_insights_clean %>% 
+  filter (Event != "insight") %>%
+  subset(subName== "Deniz" & problemName == "Triangle")%>%
+  ggplot() +
+  geom_point( aes(x = start/1000, y = factor(obNew),
+                  color= factor(obNew), size = 1)) +
+  scale_x_continuous(expand = c(0.03,0), limits = c(0, 1000)) 
+
+plot_3<-Deniz_objects_triangle + 
+  #geom_vline(xintercept = c(513, 529, 742), color = "red", lty = "dashed", size = 1) +
+  xlab("Time (seconds)") + 
+  ylab("Inscription ID")+ 
+  scale_y_discrete(breaks= seq(0,21,5)) + 
+  # This code allows us to enforce the numbers we want to show up on the axis
+  theme_classic()+
+  theme(text = element_text(size = 25)) +    
+  theme(axis.text = element_text(size = 25)) + # All font sizes
+  theme(legend.position="non") # Removing the legend
+plot_3
+
+
+ggsave(plot = plot_3,"deniz9.pdf", path ="../minimal model/Figures/")
+
+```
+
