@@ -4,7 +4,10 @@ author: "Shadi"
 date: "1/23/2022"
 output: html_document
 ---
-## This script is a modified version of what we submitted to cogsci. It makes sure that the transition matrices also include the transitions from and to the introduction moments. It also includes a sliding window analysis that replicates the increase in surprisal. This script was used to validate findings from our minimal model of mathematical insights.
+## This script is a modified version of what we submitted to cogsci. 
+## It makes sure that the transition matrices also include the transitions from and to the introduction moments. 
+## It also includes a sliding window analysis that replicates the increase in surprisal. 
+## This script was used to validate findings from our minimal model of mathematical insights.
 
 
 ```{r setup, include=FALSE}
