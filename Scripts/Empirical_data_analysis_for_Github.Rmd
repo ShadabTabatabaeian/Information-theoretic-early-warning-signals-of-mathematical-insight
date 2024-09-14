@@ -157,7 +157,7 @@ ent_from_trans_matrix <- function(trans_matrix, val_prev, val_next){
 # This code calculates the transition matrix based on all events in each session, 
 # it also calculates the transition matrix based only on prior events.
 
-#pay attention that we filter for attention to get rid of the insight moment since they are npt associated with an inscription. Intro moments are not marked in this dataset (experts_and_insights_clean).
+#pay attention that we filter for attention to get rid of the insight moment since they are not associated with an inscription. Intro moments are not marked in this dataset (experts_and_insights_clean).
 
 trans_cont_time_ent <- tibble()
 window_size <- 60*1000
