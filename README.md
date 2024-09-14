@@ -1,13 +1,17 @@
 # Information-theoretic-early-warning-signals-of-mathematical-insight
 This repository includes R Markdown scripts for a project that investigates the underlying mechanisms of creative mathematical insights to better understand, promote, and predict such creative efforts. This projects consists of two parts: a formal model of mathematical insights and an empirical study that validates the model findings. 
 
-In this repository, you can find three R Markdown scripts:
+In this repository, you can find the following R Markdown scripts:
 
 1- Model with increasing measures
 
 2- Model with fixed measures
 
-3- Empirical data analysis (the corresponding data files can be found in the same repository)
+3- Code for the energy landscape plots
+
+4- Code for network analysis of connections
+
+5- Empirical data analysis (the corresponding data files can be found in the same repository)
 
 Currently, the research team is preparing a manuscript of this project for publication. Here is a summary of the project and its results:
 
