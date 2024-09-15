@@ -1,0 +1,486 @@
+---
+title: "mini_model_fixed_gamma_sep_7_24"
+author: "Shadi"
+date: '2022-11-09'
+output: html_document
+---
+In this script, we run the model using fix values of gamma (the control variable) to test model results without conflating time trend effects.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+
+library(tidyverse)
+library(lmerTest)
+library(tidygraph)
+library(ccber) #for probability transition matrix
+library(rootSolve)
+library(cowplot)
+
+```
+
+
+```{r}
+
+solve_sde <- function(
+    f, beta, x0, gamma0, delta_t = 0.01,
+    nr_iter = 1000, sigma = 0.001,
+    initial_period = 200
+) {
+  
+  xt <- rep(x0, nr_iter)
+  gammat <- rep(gamma0, nr_iter)
+  
+  for (n in seq(2, nr_iter + 1)) {
+    
+    if(n < initial_period){ # Initial period when they're stuck in non-insight
+      gammat[n] <- gamma0
+    } else { # After initial period, gradually changing the control parameter gamma to encourage insight
+      gammat[n] <- gammat[n-1] + delta_t * beta
+    }
+    
+    xt[n] <- xt[n-1] + delta_t * f(xt[n-1], gammat[n-1]) + rnorm(1, 0, sigma)
+    if(xt[n] <= 0) xt[n] <- 0.01 # keep value above zero
+    if(xt[n] >= 1) xt[n] <- 0.99 # keep value above zero
+  }
+  
+  time <- seq(0, nr_iter * delta_t, delta_t)
+  res <- cbind(time, xt, gammat)
+  res
+}
+
+
+
+insight_ds <- function(x, gamma) gamma * (1 - x) ^2 / (0.10^2 + (1 - x)^2) - x * (1 - x)
+
+x <- seq(0, 1, 0.01)
+gammas <- seq(0.18, 0.26, 0.01)
+
+```
+
+# For one value of gamma
+```{r}
+delta_t <- 0.01
+nr_iter <- 100000
+#set.seed(1)
+
+# set x0 to the attractor in the relevant basin
+#wrap this code in a for loop that goes over values of gamma, do one run for each and look at sd and ac / data frame includes gamma, t, (15000 rows for each gamma), for each gamma create a transition matrix and surprial and the mean surprisal for each value of gamma.
+df <- function(x, gamma=.19) (gamma) * ((1-x)^2 / ((1-x)^2+(.1)^2) ) - x * (1-x)
+
+X0_attractor1 <- uniroot.all(f = df, interval=c(0.001,0.999))[1]
+X0_attractor2 <- uniroot.all(f = df, interval=c(0.001,0.999))[3]
+X0_unstable <- uniroot.all(f = df, interval=c(0.001,0.999))[2]
+
+
+res1 <- solve_sde(
+  f = insight_ds, beta = 0, x0 = X0_attractor1, gamma0 = .19,
+  nr_iter = nr_iter, delta_t = delta_t, sigma = 0.003, initial_period = 0
+)
+
+res2 <- solve_sde(
+  f = insight_ds, beta = 0, x0 = X0_attractor2, gamma0 = .19,
+  nr_iter = nr_iter, delta_t = delta_t, sigma = 0.003, initial_period = 0
+)
+
+res3 <- solve_sde(
+  f = insight_ds, beta = 0, x0 = X0_unstable, gamma0 = .19,
+  nr_iter = nr_iter, delta_t = delta_t, sigma = 0.003, initial_period = 0
+)
+```
+
+
+# for loop attempt
+```{r}
+delta_t <- 0.01
+nr_iter <- 100000
+set.seed(1)
+
+# set x0 to the attractor in the relevant basin
+#wrap this code in a for loop that goes over values of gamma, do one run for each and look at sd and ac / data frame includes gamma, t, (15000 rows for each gamma), for each gamma create a transition matrix and surprisal and the mean surprisal for each value of gamma.
+
+#df <- function(x, gamma=.19) (gamma) * ((1-x)^2 / ((1-x)^2+(.1)^2) ) - x * (1-x)
+
+all_gamma <- tibble()
+for (i in gammas){
+  df <- function(x, gamma=i) (gamma) * ((1-x)^2 / ((1-x)^2+(.1)^2) ) - x * (1-x)
+  
+  X0_attractor1 <- uniroot.all(f = df, interval=c(0.001,0.999))[1]
+  X0_attractor2 <- uniroot.all(f = df, interval=c(0.001,0.999))[3]
+  X0_unstable <- uniroot.all(f = df, interval=c(0.001,0.999))[2]
+  
+  res1 <- solve_sde(
+    f = insight_ds, beta = 0, x0 = X0_attractor1, gamma0 = i,
+    nr_iter = nr_iter, delta_t = delta_t, sigma = 0.003, initial_period = 0
+  )
+  
+  res2 <- solve_sde(
+    f = insight_ds, beta = 0, x0 = X0_attractor2, gamma0 = i,
+    nr_iter = nr_iter, delta_t = delta_t, sigma = 0.003, initial_period = 0
+  )
+  
+  res3 <- solve_sde(
+    f = insight_ds, beta = 0, x0 = X0_unstable, gamma0 = i,
+    nr_iter = nr_iter, delta_t = delta_t, sigma = 0.003, initial_period = 0
+  )
+  
+  SD_att_1 <- sd(res1)
+  SD_att_2 <- sd(res2)
+  SD_att_unst <- sd(res3)
+  
+  ac_att_1 <- acf(res1, lag.max=10, plot = F)$acf[10]
+  ac_att_2 <- acf(res2, lag.max=10, plot = F)$acf[10]
+  acc_att_unst <-acf(res3, lag.max=10, plot = F)$acf[10]
+  
+  add <- tibble(SD_att_1, SD_att_2, SD_att_unst,ac_att_1,ac_att_2, acc_att_unst, gamma = i )
+  all_gamma <- rbind(add, all_gamma)
+  
+}
+
+```
+## Just one starting point
+
+
+```{r}
+gammas <- seq(.1, .3, .01)
+nr_iter <- 15000
+run_num <- 10
+
+all_gamma_sameX0 <- tibble()
+for(run_i in 1:run_num){
+  print(run_i)
+  for (i in gammas){
+    df <- function(x, gamma=i) (gamma) * ((1-x)^2 / ((1-x)^2+(.1)^2) ) - x * (1-x)
+    
+    X0 <- uniroot.all(f = df, interval=c(0.001,0.999))[1]
+    
+    res1 <- solve_sde(
+      f = insight_ds, beta = 0, x0 = X0, gamma0 = i,
+      nr_iter = nr_iter, delta_t = delta_t, sigma = 0.003, initial_period = 0
+    )
+    
+    add <- tibble(time = res1[,"time"], U = res1[,"xt"],  gammat = res1[,"gammat"], X0 = X0, run = run_i) %>%
+      mutate(gamma_run = paste(gammat, run, sep = "-"))
+    all_gamma_sameX0 <- rbind(all_gamma_sameX0, add)
+    
+  }
+}
+
+```
+
+```{r}
+# Making a random matrix
+
+make_random_prob_matrix <- function(n) {
+  
+  all_probabilities <- matrix(nrow = n, ncol = n)
+  
+  for (i in 1:n) {
+    probability_vector <- runif(1, 0, 1)
+    for (j in 2:n-1) {
+      probability_vector[j] <- runif(1, 0 , (1 - (sum(probability_vector[1:j-1], na.rm = TRUE))))
+    }
+    probability_vector[n] <- 1 - sum(probability_vector)
+    
+    # message(sum(probability_vector))
+    probability_vector_shuffle <- sample(probability_vector, replace = F)
+    
+    all_probabilities[i, ] <- probability_vector_shuffle
+  }
+  return(all_probabilities)
+}
+
+``` 
+
+```{r}
+
+U_multiple_fixed_gam <- all_gamma_sameX0
+
+n_ob <- 25
+object_list <- c(1:n_ob) # a list of objects
+
+created_objects <- vector() # an empty vector for objects that will be introduced
+all_objects_fixed_gam <- tibble()
+current_object <- 1  # introducing the very first object
+t_since_new_intro <- 0 #time since a new object was introduced
+
+
+for (gamma_run_i in unique(U_multiple_fixed_gam$gamma_run)){ #subset by person
+  print(gamma_run_i)
+  p_matrix_noninsight <- make_random_prob_matrix(n_ob)  # random probability matrix
+  p_matrix_insight <- make_random_prob_matrix(n_ob)  # random probability matrix
+  
+  subset_subj <- U_multiple_fixed_gam %>% 
+    filter(gamma_run == gamma_run_i) %>% #Get rid of the NA rows
+    ungroup() %>% 
+    mutate(rowNum = 1:n()) %>%
+    filter(rowNum %% 30 == 0) # Thin out the dataset, so an "object interaction" event only happens every couple timesteps.
+  
+  created_objects <- vector()  #reset values for each subject
+  t_since_new_intro <- 0  #reset values for each subject
+  
+  
+  for(i in 1:nrow(subset_subj)){ 
+    U_current <- subset_subj[[i, "U"]] 
+    U_current <- case_when(U_current <= 1 & U_current >= 0 ~ U_current, #making sure that the U values fall between zero and one
+                           U_current > 1 ~ 1, 
+                           TRUE ~ 0)
+    p_matrix_current <- (1-U_current) * p_matrix_noninsight + (U_current) * p_matrix_insight #using U values to find the network of concepts at each time (all the way from the non-insight to insight)
+    
+    trans_probs_justCurrentObject <- p_matrix_current[current_object, ] #getting transition probability
+    
+    
+    next_object <- sample(object_list, 1, prob = trans_probs_justCurrentObject) # update the new object by randomly choosing an object from the object list based on the probability matrix.
+    
+    
+    if (next_object %in% created_objects) {  # mark when the object are introduced ("intro") and when they are interacted with ("attention")
+      event <- "attention"
+      t_since_new_intro <- t_since_new_intro + 1 # determine how many time steps passed from the last intro event.
+    } else {
+      created_objects <- c(created_objects, next_object)
+      event <- "intro"
+      t_since_new_intro <- 0 # obviously when an event is intro, there is no time steps between the event and itself, therefore 0.
+    }
+    add <- tibble(gamma_run = gamma_run_i,
+                  i = i, 
+                  time = subset_subj[[i, "time"]], U = U_current, 
+                  gamma = subset_subj[[i, "gammat"]],
+                  run = subset_subj[[i, "run"]],
+                  ob = current_object, 
+                  ob_next = next_object, event = event, t_since_new_intro)
+    all_objects_fixed_gam <- bind_rows(all_objects_fixed_gam, add)
+    current_object <- next_object
+  }
+}
+
+
+```
+
+
+
+
+# add surprisal for each gamma set
+
+```{r}
+# Making a function to calculate entropy from transition matrix
+ent_from_trans_matrix <- function(trans_matrix, val_prev, val_next){
+  prob = trans_matrix[val_prev, val_next]
+  h = -log2(prob)
+  return(h)
+}
+
+```
+
+```{r}
+
+# Time to calculate surprisal.
+
+add_surprisal_fixed_gam <- tibble()
+
+window_size <- 12 
+
+for(gamma_run_i in unique(all_objects_fixed_gam$gamma_run)){
+  print(gamma_run_i)
+  session_filter <- all_objects_fixed_gam %>%
+    filter(gamma_run == gamma_run_i) %>%
+    filter (event == "attention") %>%
+    mutate(obNew_fac = factor(ob), # make "ob" column into factor.
+           obNew_fac_prev = lag(ob)) # add a lagged version of "ob" column.
+  
+  subset_prob_with_intros <- all_objects_fixed_gam %>%
+    filter(gamma_run == gamma_run_i) %>%
+    mutate(obNew_fac = factor(ob),
+           obNew_fac_prev = lag(obNew_fac)) 
+  
+  #### Making a matrix of all transition counts:
+  trans_count <- CalcTransitionCounts(subset_prob_with_intros$obNew_fac)
+  # Calculating the probability of each transition:
+  trans_prob <- CalcTransitionMatrix(trans_count) 
+  
+  # Find out which row to start the for loop at — we need enough data to fill the entire sliding window
+  start_row <- session_filter %>% 
+    mutate(row = 1:n()) %>%
+    filter(time < window_size) 
+  start_row <- start_row %>% filter(time == max(start_row$time))
+  start_row <- start_row$row + 1
+  
+  for(eventi in start_row:nrow(session_filter)){
+    # Subset data so it's only the current event and prior events
+    current_event <- session_filter [eventi,]
+    event_time <- current_event$time
+    
+    prior_events <- subset_prob_with_intros %>% 
+      filter(time > (event_time - window_size), 
+             time <= event_time) %>%
+      mutate(obNew_fac_prior = factor(ob),
+             obNew_fac_prev_prior = lag(obNew_fac_prior),
+             prior_total_obj= n_distinct(ob)) 
+    
+    current_event <- subset(prior_events, time == event_time)
+    
+    # Get transition matrix for those events
+    trans_count_prior <- CalcTransitionCounts(prior_events$obNew_fac_prior)
+    trans_prob_prior <- CalcTransitionMatrix(trans_count_prior) 
+    # Calculate surprisal of the current event, relative to prior events
+    current_event$current_event_ent_prior <- ent_from_trans_matrix(trans_prob_prior,current_event$obNew_fac_prev_prior,current_event$obNew_fac_prior)
+    # Calculate entropy of the current event, relative to all events
+    current_event$current_event_ent_overall <- ent_from_trans_matrix(trans_prob,current_event$obNew_fac_prev,current_event$obNew_fac)
+    
+    add_surprisal_fixed_gam <- bind_rows(add_surprisal_fixed_gam,current_event)
+  }
+}
+
+#write_csv(add_surprisal_fixed_gam, file = "fixed_gamma_final_plots.csv" )
+#add_surprisal <- add_surprisal %>%
+# group_by(run, total_obj) %>%
+#arrange(by_group = T)
+
+#add_surprisal
+```
+```{r}
+str(add_surprisal_fixed_gam)
+str(add_surprisal_fixed_gam$current_event_ent_prior)
+```
+
+
+##point range version of the plots
+
+```{r, fig.width = 8, fig.height = 6, warning=FALSE,}
+
+add_surprisal_fixed_gam<- read.csv(file = "fixed_gamma_final_plots.csv")
+
+add_surprisal_fixed_gam_agg_1 <- add_surprisal_fixed_gam %>%
+  group_by(gamma, run) %>%
+  summarize(CF = sd(U),
+            mean_h = mean(current_event_ent_prior))
+
+add_surprisal_fixed_gam_agg_2 <- add_surprisal_fixed_gam_agg_1 %>% 
+  group_by(gamma) %>% 
+  summarize(M_CF =mean(CF),
+            se_CF = sd(CF)/sqrt(n()),
+            MM_h = mean(mean_h),
+            se_mean_h = sd(mean_h)/sqrt(n()))
+
+
+
+
+CF <- add_surprisal_fixed_gam_agg_2 %>%
+  group_by(gamma) %>%
+  filter(gamma < .25) %>%
+  ggplot(aes(x= gamma, y = M_CF)) +
+  #geom_point(aes(y=), color= "#009E73", size = 1) +
+  geom_pointrange(aes(ymin = M_CF - se_CF, 
+                      ymax = M_CF + se_CF), color= "#009E73", size = .70) +
+  geom_smooth(method="lm", color = "#999999") + 
+  ylab("critical fluctuations, \nSD(U)") +
+  xlab (expression ("\ndrive to explore" ~ (gamma))) +
+  scale_y_continuous(breaks = c(.020, .030, .040))+
+  theme_classic(base_size = 30)+
+  theme(axis.text = element_text(size = 30)) +
+  theme(text = element_text(size = 30)) +
+  theme(axis.line = element_line(size = 1))+
+  scale_color_discrete(guide=F) 
+
+
+
+SURP <- add_surprisal_fixed_gam_agg_2 %>%
+  group_by(gamma) %>%
+  filter(gamma < .25) %>%
+  ggplot(aes(x= gamma, y = MM_h)) +
+  #geom_point(aes(y=), color= "#009E73", size = 1) +
+  geom_pointrange(aes(ymin = MM_h - se_mean_h, 
+                      ymax = MM_h + se_mean_h), color= "#009E73", size = .70) +
+  geom_smooth(method="lm", color = "#999999") + 
+  ylab("surprisal") +
+  xlab (expression ("\ndrive to explore" ~ (gamma))) +
+  scale_y_continuous(breaks = c(.75, .85 , .95), limits = c(.74, 1))+
+  theme_classic(base_size = 30)+
+  theme(axis.text = element_text(size = 30)) +
+  theme(text = element_text(size = 30)) +
+  theme(axis.line = element_line(size = 1))+
+  scale_color_discrete(guide=F) 
+
+
+
+# for surprisal on sd
+
+CF_SURP <- add_surprisal_fixed_gam_agg_2 %>%
+  #group_by(gamma) %>%
+  filter(gamma < .25) %>%
+  ggplot(aes(x= M_CF, y = MM_h)) +
+  geom_pointrange(aes(ymin = MM_h - se_mean_h, 
+                      ymax = MM_h + se_mean_h), color= "#009E73", size = .70) +
+  geom_smooth(method="lm", color = "#999999") + 
+  ylab("surprisal") +
+  xlab ("\ncritical fluctuations, \nSD(U)") +
+  scale_y_continuous(breaks = c(.75, .85 , .95),  limits = c(.74, 1))+
+  scale_x_continuous(breaks = c(.025, .035, .045))+
+  theme_classic(base_size = 30)+
+  theme(axis.text = element_text(size = 30)) +
+  theme(text = element_text(size = 30)) +
+  theme(axis.line = element_line(size = 1))+
+  scale_color_discrete(guide=F) 
+
+```
+
+##Pearson correlation results:
+#gam_less_25 <- add_surprisal_fixed_gam_agg_2%>% 
+  #filter(gamma <.25)
+# cor.test(gam_less_25$M_CF, gam_less_25$MM_h)
+# 
+# Pearson's product-moment correlation
+# 
+# data:  gam_less_25$M_CF and gam_less_25$MM_h
+# t = 5.1545, df = 13, p-value = 0.0001852
+# alternative hypothesis: true correlation is not equal to 0
+# 95 percent confidence interval:
+#  0.5293699 0.9379659
+# sample estimates:
+#       cor 
+# 0.8194241 
+
+# gam_less_25 <- add_surprisal_fixed_gam_agg_2%>% 
+#   filter(gamma <.25)
+# cor.test(gam_less_25$gamma, gam_less_25$M_CF)
+# 
+# Pearson's product-moment correlation
+# 
+# data:  gam_less_25$gamma and gam_less_25$M_CF
+# t = 5.7634, df = 13, p-value = 6.562e-05
+# alternative hypothesis: true correlation is not equal to 0
+# 95 percent confidence interval:
+#  0.5930691 0.9482340
+# sample estimates:
+#       cor 
+# 0.8477725 
+
+# gam_less_25 <- add_surprisal_fixed_gam_agg_2%>% 
+#   filter(gamma <.25)
+# cor.test(gam_less_25$gamma, gam_less_25$MM_h)
+# 
+# Pearson's product-moment correlation
+# 
+# data:  gam_less_25$gamma and gam_less_25$MM_h
+# t = 7.4178, df = 13, p-value = 5.063e-06
+# alternative hypothesis: true correlation is not equal to 0
+# 95 percent confidence interval:
+#  0.7178486 0.9664040
+# sample estimates:
+#       cor 
+# 0.8993837 
+
+
+
+```{r,  fig.width = 20, fig.height = 6, warning=FALSE}
+library(cowplot)
+plot_grid(CF, SURP, CF_SURP, ncol = 3, nrow = 1, align= "hv", labels= "AUTO", label_x = .1, label_size = 30)
+```
+
+
+```{r}
+grid.arrange(CF, SURP, CF_SURP, ncol=3, nrow = 1, newpage = T )
+```
+
