@@ -9,7 +9,7 @@ In this repository, you can find the following R Markdown scripts:
 
 3- Code for the energy landscape plots
 
-4- Empirical data analysis (the corresponding data files can be found in the same repository)
+4- Empirical data analysis (data files will be available upon request)
 
 Currently, the research team is preparing a manuscript of this project for publication. Here is a summary of the project and its results:
 
