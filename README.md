@@ -3,9 +3,9 @@ This repository includes R Markdown scripts for a project that investigates the 
 
 In this repository, you can find the following R Markdown scripts:
 
-1- Model with increasing measures
+1- Code used to create the model
 
-2- Model with fixed measures
+2- Code used to test model results using fixed gamma measures 
 
 3- Code for the energy landscape plots
 
