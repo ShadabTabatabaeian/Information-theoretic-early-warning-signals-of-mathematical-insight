@@ -1,0 +1,229 @@
+---
+title: "Energy landscape"
+author: "Shadi"
+date: '2022-10-31'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(slider)
+library(rootSolve)
+
+xRoots <- tibble()
+for(gammai in seq(.1, .3, .001)){
+  print(gammai)
+  dxdt <- function(x, gamma = gammai){gamma * ((1-x)^2 / ((1-x)^2+(.1)^2) ) - x * (1-x)}
+  xRoots <- bind_rows(xRoots,
+                      tibble(gamma = gammai, roots = uniroot.all(f = dxdt, interval = c(0.001,.999)))
+                      )
+}
+
+xRoots.count <- xRoots %>% 
+  group_by(gamma) %>%
+  summarize(numRoots = n(), .groups = "drop")
+
+xRoots.count %>% 
+  ggplot(aes(x=gamma, y=numRoots)) + 
+  geom_line()
+
+xRoots.count %>% 
+  filter(numRoots == 3) %>% 
+  summarize(gammaMin = min(gamma), 
+            gammaMax = max(gamma))
+
+xRoots %>% 
+  ggplot(aes(x=gamma, y=roots)) +
+  geom_point()
+
+```
+
+```{r fig.width=8, fig.height=3}
+library(gridExtra)
+dUdt <- function(gamma, U) gamma * ((1-U)^2 / ((1-U)^2+(.1)^2) ) - U * (1-U)
+
+potential.df <- xRoots
+
+
+gamma.param <- .19
+potential.df_19 <- tibble(U = seq(0,1,.01)) %>%
+  dplyr::mutate(du = dUdt(gamma=gamma.param, U)) %>%
+  dplyr::mutate(V = 1-slide_dbl(.x = du, .f=sum, .before=nrow(potential.df), complete=T))
+
+potential.plot1 <- potential.df_19 %>%
+  ggplot(aes(x=U, y=V)) + 
+  geom_line() + 
+  geom_ribbon(aes(ymax=V), ymin=min(potential.df$V)-.5) + 
+  # geom_vline(xintercept=c(0), linetype="solid", size=2) + 
+  # geom_vline(xintercept=c(1), linetype="solid", size=2) + 
+  scale_x_continuous("", limits=c(0,1), expand=c(0,0), breaks=c(0, .5, 1)) + 
+  scale_y_continuous("Potential (V)", expand=c(0,0), limits=c(min(potential.df_19$V)-.5, max(potential.df_19$V)), breaks=NULL) +
+  theme_bw(base_size = 20) + theme(panel.grid = element_blank(), panel.border = element_rect(size=2))
+
+gamma.param <- .22
+potential.df_22 <- tibble(U = seq(0,1,.01)) %>%
+  dplyr::mutate(du = dUdt(gamma=gamma.param, U)) %>%
+  dplyr::mutate(V = 1-slide_dbl(.x = du, .f=sum, .before=nrow(potential.df), complete=T))
+
+potential.plot2 <- potential.df_22 %>%
+  ggplot(aes(x=U, y=V)) + 
+  geom_line() + 
+  geom_ribbon(aes(ymax=V), ymin=min(potential.df$V)-.5) + 
+  # geom_vline(xintercept=c(0), linetype="solid", size=2) + 
+  # geom_vline(xintercept=c(1), linetype="solid", size=2) + 
+  scale_x_continuous("Understanding (U)", limits=c(0,1), expand=c(0,0), breaks=c(0, .5, 1)) + 
+  scale_y_continuous("", expand=c(0,0), limits=c(min(potential.df_22$V)-.5, max(potential.df_22$V)), breaks=NULL) +
+  theme_bw(base_size = 20) + theme(panel.grid = element_blank(), panel.border = element_rect(size=2))
+
+gamma.param <- .25
+potential.df_25 <- tibble(U = seq(0,1,.01)) %>%
+  dplyr::mutate(du = dUdt(gamma=gamma.param, U)) %>%
+  dplyr::mutate(V = 1-slide_dbl(.x = du, .f=sum, .before=nrow(potential.df), complete=T))
+
+potential.plot3 <- potential.df_25 %>%
+  ggplot(aes(x=U, y=V)) + 
+  geom_line() + 
+  geom_ribbon(aes(ymax=V), ymin=min(potential.df$V)-.5) + 
+  # geom_vline(xintercept=c(0), linetype="solid", size=2) + 
+  # geom_vline(xintercept=c(1), linetype="solid", size=2) + 
+  scale_x_continuous("", limits=c(0,1), expand=c(0,0), breaks=c(0, .5, 1)) + 
+  scale_y_continuous("",expand=c(0,0), limits=c(min(potential.df_25$V)-.5, max(potential.df_25$V)), breaks=NULL) +
+  theme_bw(base_size = 20) + 
+ theme(panel.grid = element_blank(), panel.border = element_rect(size=2))
+
+gamma.param <- .60
+potential.df_60 <- tibble(U = seq(0,1,.01)) %>%
+  dplyr::mutate(du = dUdt(gamma=gamma.param, U)) %>%
+  dplyr::mutate(V = 1-slide_dbl(.x = du, .f=sum, .before=nrow(potential.df), complete=T))
+
+potential.plot4 <- potential.df_60 %>%
+  ggplot(aes(x=U, y=V)) + 
+  geom_line() + 
+  geom_ribbon(aes(ymax=V), ymin=min(potential.df$V)-.5) + 
+  # geom_vline(xintercept=c(0), linetype="solid", size=2) + 
+  # geom_vline(xintercept=c(1), linetype="solid", size=2) + 
+  scale_x_continuous(limits=c(0,1), expand=c(0,0), breaks=c(0, .5, 1)) + 
+  scale_y_continuous("",expand=c(0,0), limits=c(min(potential.df_60$V)-.5, max(potential.df_60$V)), breaks=NULL) +
+  theme_bw(base_size = 20) + theme(panel.grid = element_blank(), panel.border = element_rect(size=2))
+
+grid.arrange(potential.plot1, potential.plot2, potential.plot3, 
+             # potential.plot4, 
+             nrow=1)
+
+
+
+```
+
+```{r}
+dudt.plot1 <- potential.df %>%
+  ggplot(aes(x=U, y=du)) + 
+  geom_hline(yintercept=0) + 
+  geom_line() + 
+  theme_classic()
+
+```
+# SDs
+
+```{r}
+SD_U_Gam_19 <- sd(potential.df_19$du)
+SD_U_Gam_22 <- sd(potential.df_22$du)
+SD_U_Gam_25 <- sd(potential.df_25$du)
+SD_U_Gam_60 <- sd(potential.df_60$du)
+values <- c(SD_U_Gam_19,SD_U_Gam_22, SD_U_Gam_25,SD_U_Gam_60)
+df <- tibble(label = c("SD_U_Gam_19","SD_U_Gam_22","SD_U_Gam_25","SD_U_Gam_60"),
+             value = values )
+df
+ggplot(data=df, aes(x=label, y=value)) +
+  geom_bar(stat="identity")
+
+```
+
+```{r}
+library(tidyverse)
+set.seed(890)
+library(sde)
+numSteps <- 10000
+numRuns <- 10
+totalTime <- 1000
+
+
+
+X0 <- c(0.314) #this is the value of the stable attractor when gamma = .22, calculated using uniroot.all()
+
+gammaSlope <- .00005
+gammaStart <- .22
+finalGamma <- gammaStart + gammaSlope * totalTime # gamma maxes out at .27
+finalGamma # should be .27 or thereabouts
+
+d <- expression(
+  (gammaStart + gammaSlope * t) * ((1-x)^2 / ((1-x)^2+(.1)^2) ) - x * (1-x))
+s <- expression(.01) 
+
+
+X <- sde.sim(X0= X0, drift=d, sigma=s, sigma.x = 0, M = numRuns, N = numSteps, T = totalTime, method = "euler") 
+
+
+X2 <- as_tibble(X) %>% 
+  mutate(step = 0:(numSteps),
+         t = (step/numSteps) * totalTime) %>%
+  pivot_longer(cols = -c(step,t), 
+               names_to = "run", values_to = "X") %>%
+  group_by(run) %>%
+  mutate(X0 = X[1],
+         gamma = gammaStart + gammaSlope * t,
+         runAway = sum(is.na(X))>0) 
+X2
+```
+
+```{r}
+
+remove <- X2 %>% 
+  group_by(run) %>% 
+  dplyr::summarize(runAway = sum(is.na(X))>0, .groups = "drop")
+
+remove <- remove %>%
+  filter(runAway == TRUE)
+ 
+X3 <- X2 %>% filter (!run %in% remove$run)
+unique(X3$run)
+
+allRuns.sde.plot <- X2 %>% 
+  filter(runAway == F) %>%
+  ggplot(aes(x=t, y=X, color=run)) +
+  geom_line() + 
+  scale_x_continuous("time (t)", expand=c(0,0)) + 
+  scale_y_continuous("Understanding (U)", limits = c(-.01,1), expand=c(0,0)) + 
+  scale_color_discrete(guide=F) + 
+  theme_classic(base_size = 12)
+allRuns.sde.plot
+
+```
+
+```{r}
+oneRun.sde.plot <- X2 %>% 
+  filter(run == "X2") %>%
+  ggplot(aes(x=t, y=X, color=run)) +
+  geom_line() + 
+  scale_x_continuous("time (t)", expand=c(0,0)) + 
+  scale_y_continuous("Understanding (U)", limits = c(-.01,1), expand=c(0,0)) + 
+  scale_color_discrete(guide=F) + 
+  theme_classic(base_size = 12)
+
+oneRun.gamma.plot <- X2 %>% 
+  filter(run == "X1") %>%
+  ggplot(aes(x=t, y=gamma, color=run)) +
+  geom_line() + 
+  scale_x_continuous("time (t)", expand=c(0,0)) + 
+  scale_y_continuous(expression("drive to innovate (" *gamma*")"), expand=c(0,0)) + 
+  scale_color_discrete(guide=F) + 
+  theme_classic(base_size = 12)
+  
+oneRun.sde.plot
+oneRun.gamma.plot
+library(gridExtra)
+library(cowplot) #check this out for multipanel plots
+grid.arrange(oneRun.sde.plot, oneRun.gamma.plot)
+```
